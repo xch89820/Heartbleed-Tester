@@ -20,6 +20,6 @@ Test for SSL heartbleed vulnerability
     >The domain google.com is NOT vulnerable.
 
 ##Reference
-[heartbleed-masstest](https://github.com/musalbas/heartbleed-masstest)
-[RFC6520](https://tools.ietf.org/html/rfc6520)
+* [heartbleed-masstest](https://github.com/musalbas/heartbleed-masstest)
+* [RFC6520](https://tools.ietf.org/html/rfc6520)
 
