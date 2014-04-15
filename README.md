@@ -14,10 +14,10 @@ Test for SSL heartbleed vulnerability
 
 ##Example:
     python heartBleed.py 127.0.0.1
-    \>\>\>The domain 127.0.0.1 is vulnerable!
+    >The domain 127.0.0.1 is vulnerable!
 
     python heartBleed.py google.com
-    \>\>\>The domain google.com is NOT vulnerable.
+    >The domain google.com is NOT vulnerable.
 
 ##Reference
 [heartbleed-masstest](https://github.com/musalbas/heartbleed-masstest)
