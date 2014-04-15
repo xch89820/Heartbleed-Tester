@@ -2,7 +2,7 @@
 #     File Name           :     heartBleed.py
 #     Created By          :     Jone Casper(xu.chenhui@live.com)
 #     Creation Date       :     [2014-04-14 12:57]
-#     Last Modified       :     [2014-04-14 21:57]
+#     Last Modified       :     [2014-04-14 22:17]
 #     Description         :     Test for SSL heartbleed vulnerability
 #################################################################################
 #!/usr/bin/env python
@@ -219,16 +219,16 @@ if __name__ == "__main__":
                 print " ".join("{:02x}".format(ord(c)) for c in p)
             if opts.outtofile is not None and \
                len(opts.outtofile)>0:
-                if os.path.exists(os.path.dirname(opts.outtofile)):
-                    with open(opts.outtofile) as fd:
+                try:
+                    with open(opts.outtofile,"wb") as fd:
                         fd.write(test._error)
-                else:
-                    print "Output file error!"
+                except Exception,e:
+                    print str(e)
 
         elif test._error is not None:
             print "Scan domain[" +  test.domain + "] error: " + test._error
         else:
-            print "The domain " + test.domain + " is NOT vulnerable!"
+            print "The domain " + test.domain + " is NOT vulnerable."
 
     tNum = int(opts.threads)
     if tNum > 1:
