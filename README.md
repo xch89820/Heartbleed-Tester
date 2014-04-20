@@ -1,4 +1,4 @@
-heartBleedTester
+Heartbleed-Tester
 ================
 
 Test for SSL heartbleed vulnerability
